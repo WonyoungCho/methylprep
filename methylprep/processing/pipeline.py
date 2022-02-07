@@ -22,6 +22,7 @@ from .postprocess import (
     calculate_beta_value,
     calculate_m_value,
     calculate_copy_number,
+    consolidate_values,
     consolidate_values_for_sheet,
     one_sample_control_snp,
     consolidate_mouse_probes,
@@ -34,19 +35,97 @@ from .infer_channel_switch import infer_type_I_probes
 from .dye_bias import nonlinear_dye_bias_correction
 from .multi_array_idat_batches import check_array_folders
 
+# Multi-processing
+import parmap
+
 
 __all__ = ['SampleDataContainer', 'run_pipeline', 'consolidate_values_for_sheet', 'make_pipeline']
 
 LOGGER = logging.getLogger(__name__)
 
 
+def processing_idats(idat_dataset_pair, manifest, save_uncorrected, bit, do_infer_channel_switch,
+                     sesame, quality_mask, do_noob, poobah, poobah_decimals, poobah_sig,
+                     do_nonlinear_dye_bias, kwargs,
+                     export, save_control, low_memory):
+    data_container = SampleDataContainer(
+        idat_dataset_pair,
+        manifest=manifest,
+        retain_uncorrected_probe_intensities=save_uncorrected,
+        bit=bit,
+        switch_probes=(do_infer_channel_switch or sesame), # this applies all sesame-specific options
+        quality_mask= (quality_mask or sesame or False), # this applies all sesame-specific options (beta / noob offsets too)
+        do_noob=(do_noob if do_noob != None else True), # None becomes True, but make_pipeline can override with False
+        pval=poobah, #defaults to False as of v1.4.0
+        poobah_decimals=poobah_decimals,
+        poobah_sig=poobah_sig,
+        do_nonlinear_dye_bias=do_nonlinear_dye_bias, # start of run_pipeline sets this to True, False, or None
+        debug=kwargs.get('debug',False),
+        sesame=sesame,
+    )
+
+    data_container.process_all()
+
+    output_path = None;
+    noob_error = None; raw_error = None;
+    sample_id = None; control_df = None
+    
+    if export: # as CSV
+        output_path = data_container.sample.get_export_filepath()
+        data_container.export(output_path)
+
+        # this tidies-up the tqdm by moving errors to end of batch warning.
+        if data_container.noob_processing_missing_probe_errors != []:
+            noob_error = data_container.noob_processing_missing_probe_errors
+
+        if data_container.raw_processing_missing_probe_errors != []:
+            raw_error = data_container.raw_processing_missing_probe_errors
+        
+    if save_control: # Process and consolidate now. Keep in memory. These files are small.
+        sample_id = f"{data_container.sample.sentrix_id}_{data_container.sample.sentrix_position}"
+        control_df = one_sample_control_snp(data_container)
+
+    # now I can drop all the unneeded stuff from each SampleDataContainer (400MB per sample becomes 92MB)
+    # these are stored in SampleDataContainer.__data_frame for processing.
+    if low_memory is True:
+        # use data_frame values instead of these class objects, because they're not in sesame SigSets.
+        del data_container.man
+        del data_container.snp_man
+        del data_container.ctl_man
+        del data_container.green_idat
+        del data_container.red_idat
+        del data_container.data_channel
+        del data_container.methylated
+        del data_container.unmethylated
+        del data_container.oobG
+        del data_container.oobR
+        del data_container.ibG
+        del data_container.ibR
+
+    return data_container, sample_id, control_df, noob_error, raw_error, output_path
+
+
+def save_df_to_file(df, data_dir, value_name, batch_size, batch_num):
+    if not batch_size:
+        pkl_name = value_name+'_values'
+    else:
+        pkl_name = f''+value_name+'_values_{batch_num}'
+    if df.shape[1] > df.shape[0]:
+        df = df.transpose() # put probes as columns for faster loading.
+    df = df.astype('float32')
+    df = df.sort_index().reindex(sorted(df.columns), axis=1)
+    df.to_parquet(Path(data_dir, pkl_name+'.par'))
+    df.to_pickle( Path(data_dir, pkl_name+'.pkl'))
+    LOGGER.info(f"saved {pkl_name}")
+
+    
 def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None,
                  sample_sheet_filepath=None, sample_name=None,
                  betas=False, m_value=False, make_sample_sheet=False, batch_size=None,
                  save_uncorrected=False, save_control=True, meta_data_frame=True,
                  bit='float32', poobah=False, export_poobah=False,
                  poobah_decimals=3, poobah_sig=0.05, low_memory=True,
-                 sesame=True, quality_mask=None, **kwargs):
+                 sesame=True, quality_mask=None, np=1, **kwargs):
     """The main CLI processing pipeline. This does every processing step and returns a data set.
 
     Required Arguments:
@@ -307,6 +386,7 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
     # 200 samples still uses 4.8GB of memory/disk space (float64)
     missing_probe_errors = {'noob': [], 'raw':[]}
 
+   
     for batch_num, batch in enumerate(batches, 1):
         idat_datasets = parse_sample_sheet_into_idat_datasets(sample_sheet, sample_name=batch, from_s3=None, meta_only=False) # replaces get_raw_datasets
         # idat_datasets are a list; each item is a dict of {'green_idat': ..., 'red_idat':..., 'array_type', 'sample'} to feed into SigSet
@@ -317,138 +397,61 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
 
         batch_data_containers = []
         export_paths = set() # inform CLI user where to look
-        for idat_dataset_pair in tqdm(idat_datasets, total=len(idat_datasets), desc="Processing samples"):
-            data_container = SampleDataContainer(
-                idat_dataset_pair=idat_dataset_pair,
-                manifest=manifest,
-                retain_uncorrected_probe_intensities=save_uncorrected,
-                bit=bit,
-                switch_probes=(do_infer_channel_switch or sesame), # this applies all sesame-specific options
-                quality_mask= (quality_mask or sesame or False), # this applies all sesame-specific options (beta / noob offsets too)
-                do_noob=(do_noob if do_noob != None else True), # None becomes True, but make_pipeline can override with False
-                pval=poobah, #defaults to False as of v1.4.0
-                poobah_decimals=poobah_decimals,
-                poobah_sig=poobah_sig,
-                do_nonlinear_dye_bias=do_nonlinear_dye_bias, # start of run_pipeline sets this to True, False, or None
-                debug=kwargs.get('debug',False),
-                sesame=sesame,
-            )
-            data_container.process_all()
 
-            if export: # as CSV
-                output_path = data_container.sample.get_export_filepath()
-                data_container.export(output_path)
-                export_paths.add(output_path)
-                # this tidies-up the tqdm by moving errors to end of batch warning.
-                if data_container.noob_processing_missing_probe_errors != []:
-                    missing_probe_errors['noob'].extend(data_container.noob_processing_missing_probe_errors)
-                if data_container.raw_processing_missing_probe_errors != []:
-                    missing_probe_errors['raw'].extend(data_container.raw_processing_missing_probe_errors)
+        print('Processing samples ...')
+        data_containers = parmap.map(
+            processing_idats, idat_datasets, manifest, save_uncorrected, bit,
+            do_infer_channel_switch, sesame, quality_mask, do_noob, poobah,
+            poobah_decimals, poobah_sig, do_nonlinear_dye_bias, kwargs,
+            export, save_control, low_memory,
+            pm_pbar=True, pm_processes=np
+        )
 
-            if save_control: # Process and consolidate now. Keep in memory. These files are small.
-                sample_id = f"{data_container.sample.sentrix_id}_{data_container.sample.sentrix_position}"
-                control_df = one_sample_control_snp(data_container)
-                control_snps[sample_id] = control_df
+        del idat_datasets
+        
+        for i in range(len(data_containers)):
+            batch_data_containers.append(data_containers[i][0])
+            
+            if data_containers[i][1] != None:
+                control_snps[data_containers[i][1]] = data_containers[i][2]
+                
+            if data_containers[i][3] != None:
+                missing_probe_errors['noob'].extend(data_containers[i][3])
+            if data_containers[i][4] != None:
+                missing_probe_errors['raw'].extend(data_containers[i+4])
 
-            # now I can drop all the unneeded stuff from each SampleDataContainer (400MB per sample becomes 92MB)
-            # these are stored in SampleDataContainer.__data_frame for processing.
-            if low_memory is True:
-                # use data_frame values instead of these class objects, because they're not in sesame SigSets.
-                del data_container.man
-                del data_container.snp_man
-                del data_container.ctl_man
-                del data_container.green_idat
-                del data_container.red_idat
-                del data_container.data_channel
-                del data_container.methylated
-                del data_container.unmethylated
-                del data_container.oobG
-                del data_container.oobR
-                del data_container.ibG
-                del data_container.ibR
-            batch_data_containers.append(data_container)
+            if data_containers[i][5] != None:
+                export_paths.add(data_containers[i][5])
 
-            #if str(data_container.sample) == '200069280091_R01C01':
-            #    print(f"200069280091_R01C01 -- cg00035864 -- meth -- {data_container._SampleDataContainer__data_frame['meth']['cg00035864']}")
-            #    print(f"200069280091_R01C01 -- cg00035864 -- unmeth -- {data_container._SampleDataContainer__data_frame['unmeth']['cg00035864']}")
-
+        del data_containers
+        
         if kwargs.get('debug'): LOGGER.info('[finished SampleDataContainer processing]')
 
         if betas:
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='beta_value', bit=bit, poobah=poobah, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'beta_values.pkl'
-            else:
-                pkl_name = f'beta_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='beta_value', bit=bit, poobah=poobah, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'beta', batch_size, batch_num)
+            
         if m_value:
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='m_value', bit=bit, poobah=poobah, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'm_values.pkl'
-            else:
-                pkl_name = f'm_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='m_value', bit=bit, poobah=poobah, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'm', batch_size, batch_num)
+            
         if (do_save_noob is not False) or betas or m_value:
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='noob_meth', bit=bit, poobah=poobah, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'noob_meth_values.pkl'
-            else:
-                pkl_name = f'noob_meth_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32') if df.isna().sum().sum() > 0 else df.astype('uint16')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='noob_meth', bit=bit, poobah=poobah, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'noob_meth', batch_size, batch_num)
+            
             # TWO PARTS
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='noob_unmeth', bit=bit, poobah=poobah, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'noob_unmeth_values.pkl'
-            else:
-                pkl_name = f'noob_unmeth_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32') if df.isna().sum().sum() > 0 else df.astype('uint16')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='noob_unmeth', bit=bit, poobah=poobah, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'noob_unmeth', batch_size, batch_num)
 
         #if (betas or m_value) and save_uncorrected:
         if save_uncorrected:
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='meth', bit=bit, poobah=False, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'meth_values.pkl'
-            else:
-                pkl_name = f'meth_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32') if df.isna().sum().sum() > 0 else df.astype('uint16')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
-            # TWO PARTS
-            df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='unmeth', bit=bit, poobah=False, exclude_rs=True)
-            if not batch_size:
-                pkl_name = 'unmeth_values.pkl'
-            else:
-                pkl_name = f'unmeth_values_{batch_num}.pkl'
-            if df.shape[1] > df.shape[0]:
-                df = df.transpose() # put probes as columns for faster loading.
-            df = df.astype('float32') if df.isna().sum().sum() > 0 else df.astype('uint16')
-            df = df.sort_index().reindex(sorted(df.columns), axis=1)
-            pd.to_pickle(df, Path(data_dir,pkl_name))
-            LOGGER.info(f"saved {pkl_name}")
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='meth', bit=bit, poobah=False, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'meth', batch_size, batch_num)
 
+            # TWO PARTS
+            df = consolidate_values(batch_data_containers, postprocess_func_colname='unmeth', bit=bit, poobah=False, exclude_rs=True, np=np)
+            save_df_to_file(df, data_dir, 'unmeth', batch_size, batch_num)
+            
         if manifest.array_type == ArrayType.ILLUMINA_MOUSE and do_mouse:
             # save mouse specific probes
             if not batch_size:
@@ -466,16 +469,8 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
             if all(['poobah_pval' in e._SampleDataContainer__data_frame.columns for e in batch_data_containers]):
                 # this option will save a pickled dataframe of the pvalues for all samples, with sample_ids in the column headings and probe names in index.
                 # this sets poobah to false in kwargs, otherwise some pvalues would be NaN I think.
-                df = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname='poobah_pval', bit=bit, poobah=False, poobah_sig=poobah_sig, exclude_rs=True)
-                if not batch_size:
-                    pkl_name = 'poobah_values.pkl'
-                else:
-                    pkl_name = f'poobah_values_{batch_num}.pkl'
-                if df.shape[1] > df.shape[0]:
-                    df = df.transpose() # put probes as columns for faster loading.
-                df = df.sort_index().reindex(sorted(df.columns), axis=1)
-                pd.to_pickle(df, Path(data_dir,pkl_name))
-                LOGGER.info(f"saved {pkl_name}")
+                df = consolidate_values(batch_data_containers, postprocess_func_colname='poobah_pval', bit=bit, poobah=False, poobah_sig=poobah_sig, exclude_rs=True, np=np)
+                save_df_to_file(df, data_dir, 'poobah', batch_size, batch_num)
 
         # v1.3.0 fixing mem probs: pickling each batch_data_containers object then reloading it later.
         # consolidating data_containers this will break with really large sample sets, so skip here.
@@ -611,7 +606,8 @@ class SampleDataContainer(SigSet):
 
     def __init__(self, idat_dataset_pair, manifest=None, retain_uncorrected_probe_intensities=False,
                  bit='float32', pval=False, poobah_decimals=3, poobah_sig=0.05, do_noob=True,
-                 quality_mask=True, switch_probes=True, do_nonlinear_dye_bias=True, debug=False, sesame=True):
+                 quality_mask=True, switch_probes=True, do_nonlinear_dye_bias=True, debug=False,
+                 sesame=True):
         self.debug = debug
         self.do_noob = do_noob
         self.pval = pval

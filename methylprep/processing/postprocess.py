@@ -1,6 +1,7 @@
 # Lib
 import numpy as np
 import pandas as pd
+from ..utils.progress_bar import * # checks environment and imports tqdm appropriately.
 import os
 import pickle
 from pathlib import Path
@@ -8,6 +9,9 @@ import logging
 # app
 from ..utils import is_file_like
 #from ..utils.progress_bar import * # context tqdm
+
+# Multi-processing
+import parmap
 
 os.environ['NUMEXPR_MAX_THREADS'] = "8" # suppresses warning
 
@@ -47,6 +51,49 @@ def calculate_copy_number(methylated_noob, unmethylated_noob, offset=None):
     return copy_number
 
 
+def consolidate_values(batch_data_containers, postprocess_func_colname='beta_value', bit='float32', poobah=True, poobah_sig=0.05, exclude_rs=True, np=1):
+
+    if np > 1:
+        dfs = parmap.map(consolidate_values_for_sheets, batch_data_containers,
+                         postprocess_func_colname=postprocess_func_colname, bit=bit,
+                         poobah=poobah, poobah_sig=poobah_sig, exclude_rs=exclude_rs,
+                         pm_pbar=True, pm_processes=np
+                         )
+        merged = pd.concat(dfs, axis=1)
+
+    elif np == 1:
+        merged = consolidate_values_for_sheet(batch_data_containers, postprocess_func_colname=postprocess_func_colname, bit=bit, poobah=poobah, exclude_rs=True) 
+    return merged
+
+
+def consolidate_values_for_sheets(sample, postprocess_func_colname='beta_value', bit='float32', poobah=True, poobah_sig=0.05, exclude_rs=True):
+    poobah_column = 'poobah_pval'
+    quality_mask = 'quality_mask'
+
+    sample_id = f"{sample.sample.sentrix_id}_{sample.sample.sentrix_position}"
+
+    if poobah == True and poobah_column in sample._SampleDataContainer__data_frame.columns:
+        # remove all failed probes by replacing with NaN before building DF.
+        sample._SampleDataContainer__data_frame.loc[sample._SampleDataContainer__data_frame[poobah_column] >= poobah_sig, postprocess_func_colname] = np.nan
+    elif poobah == True and poobah_column not in sample._SampleDataContainer__data_frame.columns:
+        LOGGER.warning('DEBUG: missing poobah')
+
+    if sample.quality_mask == True and quality_mask in sample._SampleDataContainer__data_frame.columns:
+        # blank there probes where quality_mask == 0
+        sample._SampleDataContainer__data_frame.loc[sample._SampleDataContainer__data_frame[quality_mask] == 0, postprocess_func_colname] = np.nan
+
+    this_sample_values = sample._SampleDataContainer__data_frame[postprocess_func_colname]
+
+    if exclude_rs: # dropping rows before exporting
+        mask_snps = (sample._SampleDataContainer__data_frame.index.str.startswith('rs'))
+        this_sample_values = this_sample_values.loc[ ~mask_snps ]
+
+    df = pd.DataFrame(this_sample_values, columns=[postprocess_func_colname])
+    df.rename(columns={postprocess_func_colname: sample_id}, inplace=True)
+
+    return df
+
+
 def consolidate_values_for_sheet(data_containers, postprocess_func_colname='beta_value', bit='float32', poobah=True, poobah_sig=0.05, exclude_rs=True):
     """ Transforms results into a single dataframe with all of the function values,
     with probe names in rows, and sample beta values for probes in columns.
@@ -77,6 +124,7 @@ def consolidate_values_for_sheet(data_containers, postprocess_func_colname='beta
             before exporting to file."""
     poobah_column = 'poobah_pval'
     quality_mask = 'quality_mask'
+    
     for idx,sample in enumerate(data_containers):
         sample_id = f"{sample.sample.sentrix_id}_{sample.sample.sentrix_position}"
 
