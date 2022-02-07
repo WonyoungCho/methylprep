@@ -12,6 +12,9 @@ from ..files import IdatDataset
 from ..utils.progress_bar import * # checks environment and imports tqdm appropriately.
 from collections import Counter
 
+# Parallel processing
+import parmap
+
 
 __all__ = ['SigSet', 'parse_sample_sheet_into_idat_datasets', 'RawMetaDataset']
 
@@ -33,7 +36,15 @@ class RawMetaDataset():
     def __init__(self, sample):
         self.sample = sample
 
-def parse_sample_sheet_into_idat_datasets(sample_sheet, sample_name=None, from_s3=None, meta_only=False):
+def collect_idats(sample,zip_reader=None):
+    green_filepath = sample.get_filepath('idat', Channel.GREEN)
+    green_idat = IdatDataset(green_filepath, channel=Channel.GREEN)
+    red_filepath = sample.get_filepath('idat', Channel.RED)
+    red_idat = IdatDataset(red_filepath, channel=Channel.RED)
+    return {'green_idat': green_idat, 'red_idat': red_idat, 'sample': sample}
+
+
+def parse_sample_sheet_into_idat_datasets(sample_sheet, sample_name=None, from_s3=None, meta_only=False, np=1):
     """Generates a collection of IdatDatasets from samples in a sample sheet.
 
     Arguments:
@@ -70,27 +81,16 @@ def parse_sample_sheet_into_idat_datasets(sample_sheet, sample_name=None, from_s
     elif from_s3 and not meta_only:
         #parser = RawDataset.from_sample_s3
         zip_reader = from_s3
-        def parser(zip_reader, sample):
-            green_filepath = sample.get_filepath('idat', Channel.GREEN)
-            green_idat = IdatDataset(green_filepath, channel=Channel.GREEN)
-            red_filepath = sample.get_filepath('idat', Channel.RED)
-            red_idat = IdatDataset(red_filepath, channel=Channel.RED)
-            return {'green_idat': green_idat, 'red_idat': red_idat, 'sample': sample}
-        idat_datasets = []
-        for sample in tqdm(samples, total=len(samples), desc='Reading IDATs'):
-            idat_datasets.append(parser(zip_reader, sample))
+
+        print('Reading IDATs ...')
+        idat_datasets = parmap.map(collect_idats, samples, zip_reader, pm_pbar=True, pm_processes=np)
+
     elif not from_s3 and not meta_only:
         #parser = RawDataset.from_sample
-        def parser(sample):
-            green_filepath = sample.get_filepath('idat', Channel.GREEN)
-            green_idat = IdatDataset(green_filepath, channel=Channel.GREEN)
-            red_filepath = sample.get_filepath('idat', Channel.RED)
-            red_idat = IdatDataset(red_filepath, channel=Channel.RED)
-            return {'green_idat': green_idat, 'red_idat': red_idat, 'sample': sample}
-        idat_datasets = []
-        for sample in tqdm(samples, total=len(samples), desc='Reading IDATs'):
-            idat_datasets.append(parser(sample))
 
+        print('Reading IDATs ...')
+        idat_datasets = parmap.map(collect_idats, samples, pm_pbar=True, pm_processes=np)
+            
     if not meta_only:
         idat_datasets = list(idat_datasets) # tqdm objects are not subscriptable, not like a real list
         # ensure all idat files have same number of probes
