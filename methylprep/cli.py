@@ -16,6 +16,8 @@ from .download import (
     pipeline_find_betas_any_source
     )
 
+import multiprocessing as mp
+
 LOGGER = logging.getLogger(__name__)
 
 class DefaultParser(argparse.ArgumentParser):
@@ -237,6 +239,14 @@ def cli_process(cmd_args):
     )
 
 
+    parser.add_argument(
+        '-np', '--num_process',
+        required=False,
+        type=int,
+        default=mp.cpu_count(),
+        help='Number of threads to run process (default : '+str(mp.cpu_count())+' ).'
+    )
+
     args = parser.parse_args(cmd_args)
     array_type = args.array_type
     manifest_filepath = args.manifest
@@ -276,7 +286,8 @@ def cli_process(cmd_args):
         poobah=args.poobah,
         export_poobah=args.export_poobah,
         quality_mask=(not args.no_quality_mask),
-        sesame=(not args.minfi) # default 'sesame' method can be turned off using --minfi
+        sesame=(not args.minfi), # default 'sesame' method can be turned off using --minfi
+        np=args.num_process
         )
 
 
