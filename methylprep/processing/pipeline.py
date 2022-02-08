@@ -109,7 +109,7 @@ def save_df_to_file(df, data_dir, value_name, batch_size, batch_num):
     if not batch_size:
         pkl_name = value_name+'_values'
     else:
-        pkl_name = f''+value_name+'_values_{batch_num}'
+        pkl_name = f'{value_name}_values_{batch_num}'
     if df.shape[1] > df.shape[0]:
         df = df.transpose() # put probes as columns for faster loading.
     df = df.astype('float32')
@@ -386,7 +386,6 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
     # 200 samples still uses 4.8GB of memory/disk space (float64)
     missing_probe_errors = {'noob': [], 'raw':[]}
 
-   
     for batch_num, batch in enumerate(batches, 1):
         idat_datasets = parse_sample_sheet_into_idat_datasets(sample_sheet, sample_name=batch, from_s3=None, meta_only=False) # replaces get_raw_datasets
         # idat_datasets are a list; each item is a dict of {'green_idat': ..., 'red_idat':..., 'array_type', 'sample'} to feed into SigSet
@@ -478,10 +477,11 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         #    continue
         #data_containers.extend(batch_data_containers)
 
-        pkl_name = f"_temp_data_{batch_num}.pkl"
-        with open(Path(data_dir,pkl_name), 'wb') as temp_data:
-            pickle.dump(batch_data_containers, temp_data)
-            temp_data_pickles.append(pkl_name)
+        if batch_size:
+            pkl_name = f"_temp_data_{batch_num}.pkl"
+            with open(Path(data_dir,pkl_name), 'wb') as temp_data:
+                pickle.dump(batch_data_containers, temp_data)
+                temp_data_pickles.append(pkl_name)
 
     del batch_data_containers
 
@@ -551,34 +551,36 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
             temp_file.unlink(missing_ok=True) # delete it
         return
 
-    # consolidate batches and delete parts, if possible
-    for file_type in ['beta_values', 'm_values', 'meth_values', 'unmeth_values',
-        'noob_meth_values', 'noob_unmeth_values', 'mouse_probes', 'poobah_values']: # control_probes.pkl not included yet
-        test_parts = list([str(temp_file) for temp_file in Path(data_dir).rglob(f'{file_type}*.pkl')])
-        num_batches = len(test_parts)
-        # ensures that only the file_types that appear to be selected get merged.
-        #print(f"DEBUG num_batches {num_batches}, batch_size {batch_size}, file_type {file_type}")
-        if batch_size and num_batches >= 1: #--- if the batch size was larger than the number of total samples, this will still drop the _1
-            merge_batches(num_batches, data_dir, file_type)
+    if batch_size:
+        # consolidate batches and delete parts, if possible
+        for file_type in ['beta_values', 'm_values', 'meth_values', 'unmeth_values',
+                          'noob_meth_values', 'noob_unmeth_values', 'mouse_probes', 'poobah_values']: # control_probes.pkl not included yet
+            test_parts = list([str(temp_file) for temp_file in Path(data_dir).rglob(f'{file_type}*.pkl')])
+            num_batches = len(test_parts)
+            # ensures that only the file_types that appear to be selected get merged.
+            #print(f"DEBUG num_batches {num_batches}, batch_size {batch_size}, file_type {file_type}")
+            if batch_size and num_batches >= 1: #--- if the batch size was larger than the number of total samples, this will still drop the _1
+                merge_batches(num_batches, data_dir, file_type)
 
-    # reload all the big stuff -- after everything important is done.
-    # attempts to consolidate all the batch_files below, if they'll fit in memory.
-    data_containers = []
-    for temp_data in temp_data_pickles:
-        temp_file = Path(data_dir, temp_data)
-        if temp_file.exists(): #possibly user deletes file while processing, since these are big
-            with open(temp_file,'rb') as _file:
-                batch_data_containers = pickle.load(_file)
-                data_containers.extend(batch_data_containers)
-                del batch_data_containers
-            temp_file.unlink() # delete it after loading.
+        # reload all the big stuff -- after everything important is done.
+        # attempts to consolidate all the batch_files below, if they'll fit in memory.
 
-    if betas:
-        return consolidate_values_for_sheet(data_containers, postprocess_func_colname='beta_value', poobah=poobah, exclude_rs=True)
-    elif m_value:
-        return consolidate_values_for_sheet(data_containers, postprocess_func_colname='m_value', poobah=poobah, exclude_rs=True)
-    else:
-        return data_containers
+        data_containers = []
+        for temp_data in temp_data_pickles:
+            temp_file = Path(data_dir, temp_data)
+            if temp_file.exists(): #possibly user deletes file while processing, since these are big
+                with open(temp_file,'rb') as _file:
+                    batch_data_containers = pickle.load(_file)
+                    data_containers.extend(batch_data_containers)
+                    del batch_data_containers
+                temp_file.unlink() # delete it after loading.
+
+        if betas:
+            return consolidate_values(data_containers, postprocess_func_colname='beta_value', poobah=poobah, exclude_rs=True)
+        elif m_value:
+            return consolidate_values(data_containers, postprocess_func_colname='m_value', poobah=poobah, exclude_rs=True)
+        else:
+            return data_containers
 
 
 class SampleDataContainer(SigSet):
