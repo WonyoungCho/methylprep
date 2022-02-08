@@ -549,7 +549,7 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         # del batch_data_containers
         for temp_data in temp_data_pickles:
             temp_file = Path(data_dir, temp_data)
-            temp_file.unlink(missing_ok=True) # delete it
+            if temp_file.exists: temp_file.unlink() #missing_ok=True) # delete it
         return
 
     if batch_size:
