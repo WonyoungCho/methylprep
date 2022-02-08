@@ -477,7 +477,7 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         #    continue
         #data_containers.extend(batch_data_containers)
 
-    del batch_data_containers
+        del batch_data_containers
 
     if meta_data_frame == True:
         #sample_sheet.fields is a complete mapping of original and renamed_fields
