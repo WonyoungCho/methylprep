@@ -878,7 +878,8 @@ class SampleDataContainer(SigSet):
         #        else:
         #            num_missing = self.__data_frame['meth'].isna().sum() + self.__data_frame['unmeth'].isna().sum()
         #        self.raw_processing_missing_probe_errors.append((output_path, num_missing))
-        this.to_csv(output_path)
+        # this.to_csv(output_path)
+        this.to_parquet(output_path+'.par', compression='gzip')
 
     def _postprocess(self, input_dataframe, postprocess_func, header, offset=None):
         if offset is not None:
