@@ -16,8 +16,6 @@ from .download import (
     pipeline_find_betas_any_source
     )
 
-import datetime
-import time
 import multiprocessing as mp
 
 LOGGER = logging.getLogger(__name__)
@@ -154,7 +152,7 @@ def cli_process(cmd_args):
     )
 
     parser.add_argument(
-        '--batch_size',
+        '-bs', '--batch_size',
         required=False,
         type=int,
         help='If specified, samples will be processed and saved in batches no greater than the specified batch size'
@@ -240,6 +238,7 @@ def cli_process(cmd_args):
         help='If specified, saves everything: (beta_values.pkl, m_value.pkl, control_probes.pkl, CSVs for each sample, including uncorrected raw values, and meta data, and poobah_values.pkl). And removes failed probes using sesame pOOBah method from these files. This overrides individual CLI settings.'
     )
 
+
     parser.add_argument(
         '-np', '--num_process',
         required=False,
@@ -269,7 +268,6 @@ def cli_process(cmd_args):
 
     #print(vars(args).items())
 
-    start = time.time()
     run_pipeline(
         args.data_dir,
         array_type=args.array_type,
@@ -291,9 +289,7 @@ def cli_process(cmd_args):
         sesame=(not args.minfi), # default 'sesame' method can be turned off using --minfi
         np=args.num_process
         )
-    elapsed = datetime.timedelta(seconds=time.time()-start)
-    print('\n\033[92mElapsed time :',elapsed,'.\033[0m\n')
-    
+
 
 def cli_beta_bakery(cmd_args):
     parser = DefaultParser(
