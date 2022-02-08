@@ -114,8 +114,8 @@ def save_df_to_file(df, data_dir, value_name, batch_size, batch_num):
         df = df.transpose() # put probes as columns for faster loading.
     df = df.astype('float32')
     df = df.sort_index().reindex(sorted(df.columns), axis=1)
-    df.to_parquet(Path(data_dir, pkl_name+'.par'))
-    df.to_pickle( Path(data_dir, pkl_name+'.pkl'))
+    df.to_parquet(Path(data_dir, pkl_name+'.par'), compression='gzip')
+    #df.to_pickle( Path(data_dir, pkl_name+'.pkl'))
     LOGGER.info(f"saved {pkl_name}")
 
     
@@ -556,7 +556,7 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         # consolidate batches and delete parts, if possible
         for file_type in ['beta_values', 'm_values', 'meth_values', 'unmeth_values',
                           'noob_meth_values', 'noob_unmeth_values', 'mouse_probes', 'poobah_values']: # control_probes.pkl not included yet
-            test_parts = list([str(temp_file) for temp_file in Path(data_dir).rglob(f'{file_type}*.pkl')])
+            test_parts = list([str(temp_file) for temp_file in Path(data_dir).rglob(f'{file_type}*.par')])
             num_batches = len(test_parts)
             # ensures that only the file_types that appear to be selected get merged.
             #print(f"DEBUG num_batches {num_batches}, batch_size {batch_size}, file_type {file_type}")

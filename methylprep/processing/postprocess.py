@@ -255,18 +255,19 @@ def merge_batches(num_batches, data_dir, filepattern):
     dfs = []
     for num in range(num_batches):
         try:
-            filename = f"{filepattern}_{num+1}.pkl"
+            filename = f"{filepattern}_{num+1}.par"
             part = Path(data_dir, filename)
             if part.exists():
-                dfs.append( pd.read_pickle(part) )
+                dfs.append( pd.read_parquet(part) )
+                part.unlink()
         except Exception as e:
             LOGGER.error(f'error merging batch {num} of {filepattern}')
     #tqdm.pandas()
     if dfs: # pipeline passes in all filenames, but not all exist
         dfs = pd.concat(dfs, axis='columns', join='inner') #.progress_apply(lambda x: x)
-        outfile_name = Path(data_dir, f"{filepattern}.pkl")
+        outfile_name = Path(data_dir, f"{filepattern}.par")
         LOGGER.info(f"{filepattern}: {dfs.shape}")
-        dfs.to_pickle(str(outfile_name))
+        dfs.to_parquet(str(outfile_name), compression='gzip')
         del dfs # save memory.
 
         # confirm file saved ok.
