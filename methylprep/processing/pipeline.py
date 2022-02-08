@@ -477,13 +477,6 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         #    continue
         #data_containers.extend(batch_data_containers)
 
-        if batch_size:
-            pkl_name = f"_temp_data_{batch_num}.pkl"
-            print(f'Saving batch {batch_num} file temporary ...')
-            with open(Path(data_dir,pkl_name), 'wb') as temp_data:
-                pickle.dump(batch_data_containers, temp_data)
-                temp_data_pickles.append(pkl_name)
-
     del batch_data_containers
 
     if meta_data_frame == True:
@@ -543,15 +536,6 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
         samples_affected = len(set([item[0] for item in missing_probe_errors['raw']]))
         LOGGER.warning(f"{samples_affected} samples were missing (or had infinite values) RAW meth/unmeth probe values (average {avg_missing_per_sample} per sample)")
 
-    # batch processing done; consolidate and return data. This uses much more memory, but not called if in batch mode.
-    if batch_size and batch_size >= 200:
-        LOGGER.warning("Because the batch size was >=200 samples, files are saved but no data objects are returned.")
-        # del batch_data_containers
-        for temp_data in temp_data_pickles:
-            temp_file = Path(data_dir, temp_data)
-            if temp_file.exists: temp_file.unlink() #missing_ok=True) # delete it
-        return
-
     if batch_size:
         # consolidate batches and delete parts, if possible
         for file_type in ['beta_values', 'm_values', 'meth_values', 'unmeth_values',
@@ -565,23 +549,6 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
 
         # reload all the big stuff -- after everything important is done.
         # attempts to consolidate all the batch_files below, if they'll fit in memory.
-
-        data_containers = []
-        for temp_data in temp_data_pickles:
-            temp_file = Path(data_dir, temp_data)
-            if temp_file.exists(): #possibly user deletes file while processing, since these are big
-                with open(temp_file,'rb') as _file:
-                    batch_data_containers = pickle.load(_file)
-                    data_containers.extend(batch_data_containers)
-                    del batch_data_containers
-                temp_file.unlink() # delete it after loading.
-
-        if betas:
-            return consolidate_values(data_containers, postprocess_func_colname='beta_value', poobah=poobah, exclude_rs=True)
-        elif m_value:
-            return consolidate_values(data_containers, postprocess_func_colname='m_value', poobah=poobah, exclude_rs=True)
-        else:
-            return data_containers
 
 
 class SampleDataContainer(SigSet):
