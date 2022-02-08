@@ -479,6 +479,7 @@ def run_pipeline(data_dir, array_type=None, export=False, manifest_filepath=None
 
         if batch_size:
             pkl_name = f"_temp_data_{batch_num}.pkl"
+            print(f'Saving batch {batch_num} file temporary ...')
             with open(Path(data_dir,pkl_name), 'wb') as temp_data:
                 pickle.dump(batch_data_containers, temp_data)
                 temp_data_pickles.append(pkl_name)
