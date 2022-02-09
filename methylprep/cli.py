@@ -245,7 +245,7 @@ def cli_process(cmd_args):
         required=False,
         type=int,
         default=mp.cpu_count(),
-        help='Number of threads to run process (default : '+str(mp.cpu_count())+' ).'
+        help='Number of threads to run jobs (default : '+str(mp.cpu_count())+' ).'
     )
 
     args = parser.parse_args(cmd_args)
