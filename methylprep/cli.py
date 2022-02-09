@@ -292,8 +292,8 @@ def cli_process(cmd_args):
         np=args.num_process
         )
     elapsed = datetime.timedelta(seconds=time.time() - start)
-    print('\n\033[92mElapsed time :', elapsed,'.\033[0m\n')
-
+    print(f'\n\033[92mElapsed time : {elapsed}. Finished at {datetime.datetime.now()}.\033[0m\n')
+    
     
 def cli_beta_bakery(cmd_args):
     parser = DefaultParser(
