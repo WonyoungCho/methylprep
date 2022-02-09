@@ -292,8 +292,8 @@ def cli_process(cmd_args):
         )
     
     finish = datetime.now()
-    print(f'\n\033[92mElapsed time : {finish - start}.')
-    print(f'Started at {start}. \nFinished at {finish}.\033[0m\n')
+    print(f'\n\033[92mElapsed time : {finish - start}.\033[0m')
+    print(f'Started at {start}. \nFinished at {finish}.\n')
     
     
 def cli_beta_bakery(cmd_args):
