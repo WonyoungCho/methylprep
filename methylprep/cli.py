@@ -289,7 +289,7 @@ def cli_process(cmd_args):
         export_poobah=args.export_poobah,
         quality_mask=(not args.no_quality_mask),
         sesame=(not args.minfi), # default 'sesame' method can be turned off using --minfi
-        np=args.num_threads
+        np=args.threads
         )
     elapsed = datetime.timedelta(seconds=time.time() - start)
     print(f'\n\033[92mElapsed time : {elapsed}. Finished at {datetime.datetime.now()}.\033[0m\n')
