@@ -17,7 +17,6 @@ from .download import (
     )
 
 import datetime
-import time
 import multiprocessing as mp
 
 LOGGER = logging.getLogger(__name__)
@@ -269,7 +268,7 @@ def cli_process(cmd_args):
 
     #print(vars(args).items())
 
-    start = time.time()
+    start = datetime.now()
     run_pipeline(
         args.data_dir,
         array_type=args.array_type,
@@ -291,8 +290,10 @@ def cli_process(cmd_args):
         sesame=(not args.minfi), # default 'sesame' method can be turned off using --minfi
         np=args.threads
         )
-    elapsed = datetime.timedelta(seconds=time.time() - start)
-    print(f'\n\033[92mElapsed time : {elapsed}. Finished at {datetime.datetime.now()}.\033[0m\n')
+    
+    finish = datetime.now()
+    print(f'\n\033[92mElapsed time : {finish - start}.')
+    print(f'Started at {start}. \nFinished at {finish}.\033[0m\n')
     
     
 def cli_beta_bakery(cmd_args):
