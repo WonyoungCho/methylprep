@@ -16,7 +16,7 @@ from .download import (
     pipeline_find_betas_any_source
     )
 
-import datetime
+from datetime import datetime
 import multiprocessing as mp
 
 LOGGER = logging.getLogger(__name__)
