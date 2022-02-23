@@ -56,6 +56,6 @@ setup(
         'openpyxl'],
     entry_points='''
         [console_scripts]
-        methylprep-cli=methylprep.cli:app
+        methylprep-cli=methylprep.cli:cli_app
     ''',
 )
